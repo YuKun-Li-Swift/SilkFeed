@@ -1,0 +1,24 @@
+{
+  "originHash" : "b22d5eb66e2b0dd80e32df88579d7dad6d8c615a145348d1765c5f685b920ff4",
+  "pins" : [
+    {
+      "identity" : "datetools",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/MatthewYork/DateTools",
+      "state" : {
+        "branch" : "master",
+        "revision" : "5550567233ee106220c5bf138d2fe8e732c99e98"
+      }
+    },
+    {
+      "identity" : "swiftsoup",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scinfu/SwiftSoup",
+      "state" : {
+        "revision" : "3c2c7e1e72b8abd96eafbae80323c5c1e5317437",
+        "version" : "2.7.5"
+      }
+    }
+  ],
+  "version" : 3
+}
