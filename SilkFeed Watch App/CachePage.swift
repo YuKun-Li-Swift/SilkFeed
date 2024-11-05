@@ -278,18 +278,20 @@ class NewCacheViewModel {
     }
     private
     static
-    func getURLSessionConfig() -> (URLSessionConfiguration) {
+    func getURLSessionConfig(waitsForConnectivity:Bool,timeout:TimeInterval) -> (URLSessionConfiguration) {
         let urlSessionConfig = URLSessionConfiguration.default
-        urlSessionConfig.waitsForConnectivity = true
+        urlSessionConfig.waitsForConnectivity = waitsForConnectivity
         urlSessionConfig.shouldUseExtendedBackgroundIdleMode = true
-        urlSessionConfig.timeoutIntervalForRequest = 60*60/*1h*/
-        urlSessionConfig.timeoutIntervalForResource = 60*60/*1h*/
+        urlSessionConfig.timeoutIntervalForRequest = timeout
+        urlSessionConfig.timeoutIntervalForResource = timeout
         return (urlSessionConfig)
     }
     
     private
     func startDownload(url:URL) async throws -> String {
-        let (urlSessionConfiguration,urlRequest) = (Self.getURLSessionConfig(),DownloadSessionPrepare.getURLRequest(url: url))
+        //如果用户输入了错误的RSS源，我们不能一直保持等待，那样永远不会成功。
+        //我们设置一个合理的请求时间（15.6s），如果是有效的RSS源，也该请求到了。
+        let (urlSessionConfiguration,urlRequest) = (Self.getURLSessionConfig(waitsForConnectivity: false/*这么快的请求，不考虑请求到一半黑屏的情况*/, timeout: 15.6),DownloadSessionPrepare.getURLRequest(url: url))
         let urlSession = URLSession(configuration: urlSessionConfiguration)
         let (data,_) = try await urlSession.data(for: urlRequest)
         guard let string = String(data:data, encoding: .utf8) else {
@@ -317,7 +319,7 @@ class NewCacheViewModel {
         var result = [URL: Data]()
         
         try await withThrowingTaskGroup(of: (URL, Data).self) { group in
-            let (urlSessionConfiguration) = (Self.getURLSessionConfig())
+            let (urlSessionConfiguration) = (Self.getURLSessionConfig(waitsForConnectivity: true/*下载图片很慢的，需要允许黑屏后台下载*/, timeout: 60*60/*1h*/))
             let urlSession = URLSession(configuration: urlSessionConfiguration)
           
             for url in urls {
