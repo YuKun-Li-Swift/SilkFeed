@@ -97,12 +97,21 @@ struct NewsItemReadingPage: View {
             VStack {
                 FullScreenImageView { fullScreenImageMod in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(rows, content: { row in
-                                NewsReadingPageRowView(row: row, fullScreenMod: fullScreenImageMod)
-                            })
+                        InsertScrollOffsetYMarker(coordinateSpaceName: "NewsContentScrollView") {
+                            VStack(alignment: .leading, spacing: 6) {
+                               
+                                ForEach(rows, content: { row in
+                                    NewsReadingPageRowView(row: row, fullScreenMod: fullScreenImageMod)
+                                })
+                            }
+                        } onOffsetYChanged: { newValue in
+                            vm.currentOffsetY = newValue
                         }
                     }
+                    .scrollPosition($vm.scrollPosition, anchor: .center)
+                    .coordinateSpace(.named("NewsContentScrollView"))
+                } focusToContent: {
+                    vm.scrollDownOnePixel()
                 }
             }
             .navigationTitle("详情")
@@ -128,6 +137,29 @@ struct NewsItemReadingPage: View {
     }
 }
 
+//在可滚动内容的顶部插入一个标记视图，读取它的位置，来测量ScrollView的偏移
+struct InsertScrollOffsetYMarker<V:View>: View {
+    let coordinateSpaceName:String
+    @ViewBuilder
+    let content:()->(V)
+    let onOffsetYChanged:(Double)->()
+    var body: some View {
+        VStack(alignment: .center, spacing: 0, content: {
+            GeometryReader { proxy in
+                Rectangle()
+                    .fill(.clear)
+                    .frame(width: 1, height: 1, alignment: .center)
+                //用来测量可滚动内容相对于ScrollView的偏移
+                    .onChange(of: proxy.frame(in: .named(coordinateSpaceName)), initial: true) { oldValue, newValue in
+                        onOffsetYChanged(newValue.minY)
+                    }
+            }
+            content()
+        })
+        .scrollTargetLayout()
+    }
+}
+
 @MainActor
 @Observable
 class NewsItemReadingViewModel {
@@ -141,6 +173,15 @@ class NewsItemReadingViewModel {
             rows = newRows
         } catch {
             error0 = .init(error: error)
+        }
+    }
+    //用于往下滚动一个像素，来夺取焦点
+    var scrollPosition = ScrollPosition()
+    var currentOffsetY = 0.0
+    func scrollDownOnePixel() {
+        //往下滚动了多少，currentOffsetY就是负多少
+        withAnimation(.easeInOut) {
+            scrollPosition.scrollTo(y: -currentOffsetY + 1/*微小滚动一点，但至少是1，不然触发不了滚动条，没有获取焦点的效果*/)
         }
     }
     private let parser = RSSParser()
@@ -178,10 +219,19 @@ struct AsyncLocalImage: View {
                         fullScreenMod.presentedImage = uiImage
                 })
                 .matchedGeometryEffect(id: isMeFullScreen ?  .random(in: 0...Int.max) : uiImage.hash , in: fullScreenMod.nameSpace)//确保在nameSpace中只有一个是当前显示的图片的ID的元素，如果我正在被呈现，那我就黑掉这个，只保持尺寸占位
+                //这个是为了和Rectangle().transition(.blurReplace.animation(.smooth))相呼应，不关DelayReAppearImageView的事
+                .transition(.blurReplace.animation(.smooth))
             } else {
+                //在图片是不支持的格式的时候，可能出现这个
                 Rectangle()
-                    .aspectRatio(1, contentMode: .fit)
-                    .redacted(reason: .placeholder)
+                    .fill(Color.black.gradient)
+                    .aspectRatio(1, contentMode: .fit)//默认以正方形占位
+                    .overlay(alignment: .center, content: {
+                        Image(systemName: "photo")
+                            .imageScale(.large)
+                            .bold()
+                    })
+                    .accessibilityLabel(Text("图片"))
                     .transition(.blurReplace.animation(.smooth))
             }
         }
@@ -212,7 +262,9 @@ struct DelayReAppearImageView: View {
             Image(uiImage: uiImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
+                .accessibilityLabel(Text("图片"))
         }
+        .accessibilityRemoveTraits(.isButton)//查看大图对于视障人士来讲也没有意义
         .buttonStyle(.plain)
         .opacity(isAppearInner ? 0 : 1)
         .onChange(of: isMeFullScreen, initial: true) { oldValue, newValue in
@@ -232,27 +284,34 @@ struct DelayReAppearImageView: View {
 struct FullScreenImageView<V:View>: View {
     @ViewBuilder
     let content:(FullScreenImageModel)->(V)
+    var focusToContent:()->()
     @Namespace
     private var nameSpace
     @State
     private var mod:FullScreenImageModel? = nil
+    @FocusState
+    private var focusToNewsContent
     var body: some View {
         ZStack {
             if let mod {
                 GeometryReader(content: { proxy in
                     content(mod)
-                        .animation(.smooth) { v in
-                            v
-                                .allowsHitTesting(mod.presentedImage == nil)
-                                .focusable(mod.presentedImage == nil)//表冠
-                        }
+                        .allowsHitTesting(mod.presentedImage == nil)//在查看大图的时候，点击不应该穿透到这里
                         .zIndex(0)
                     if let presentedImage = mod.presentedImage {
+                        Color.black
+                            .ignoresSafeArea()
+                            .transition(.opacity.animation(.smooth))
+                            .zIndex(1)//不要露出背景
                         FullScreenOverlayImage(presentedImage: presentedImage, onTap: {
                                 mod.presentedImage = nil
                         },nameSpace:nameSpace, scaleValue: ImageLayoutToolKit.imageScaleToWidthFit(uiImage: presentedImage, availableScale: proxy.size))
+                        .onDisappear {
+                            //把表冠焦点还回去
+                            focusToContent()
+                        }
                         .transition(.asymmetric(insertion: .identity, removal: .opacity.animation(.linear(duration: .leastNormalMagnitude/*不能直接写0，不然动画就丢失了*/).delay(0.3)/*让我多显示0.3秒，以确保退出大图的时候，也正常有动画*/)))
-                        .zIndex(1)//确保图片总是在文字上面（光是ZStack还保证不了这一点）
+                        .zIndex(2)//确保图片总是在文字上面（光是ZStack还保证不了这一点）
                     }
                 })
                 .animation(.smooth(duration: 0.3), value: mod.presentedImage)//让matchedGeometryEffect正常带上动画
@@ -285,14 +344,17 @@ struct FullScreenOverlayImage: View {
     @State
     var scaleValue:Double//默认值应该是刚好fit的尺寸
     var clampedScaleValue:Double {
-        //因为虽然digitalCrownRotation限制了MinValue和MaxValue，但是在做回弹效果的时候，值还是会超出返回，并且我们不希望小于0的frame（大一点没事），所以需要截断
-        scaleValue.clamped(to: Double.leastNormalMagnitude...1)
+        //因为虽然digitalCrownRotation限制了MinValue和MaxValue，但是在做回弹效果的时候，值还是会超出。
+        //我们不希望小于等于0的frame（大一点没事），所以需要截断最小值到Double.leastNormalMagnitude，而不限制最大值。
+        scaleValue.clamped(min: Double.leastNormalMagnitude)
     }
+    private let sensitivityScale:Double = 1.0//用来调节表冠交互的灵敏度——通过改变表冠交互的行程
     var body: some View {
         scrollView()
         .focusable()
         //最大放大一倍，因为图片原来的尺寸已经对于手表的屏幕来讲很大了
-        .digitalCrownRotation($scaleValue, from: 0.1, through: 1, sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true, onChange: { _ in }, onIdle: {})
+        .modifier(AdjustableDigitalCrownRotation(rotateValue:$scaleValue,minValue: 0.1, maxValue: 1))
+        .scrollIndicators(.never)/*避免ScrollView的滚动条和digitalCrownRotation的滚动条打架*/
     }
     @ViewBuilder
     func scrollView() -> some View {
@@ -311,9 +373,46 @@ struct FullScreenOverlayImage: View {
     }
 }
 
+
+///在不改变外部取值范围的情况下，调节灵敏度
+struct AdjustableDigitalCrownRotation: ViewModifier {
+    @Binding
+    var rotateValue:Double
+    let minValue:Double
+    let maxValue:Double
+    @State
+    private var innerRotateValue:Double = -1//一出现就会被.task赋值的
+    @State
+    private var ignoreFirstInnerRotateValueChange = true
+    private let sensitivityScale:Double = 3.2//用来调节表冠交互的灵敏度——通过改变表冠交互的行程，值越大，则需要旋转越多才能达到相同的变化。如果范围是0.1-1，并且sensitivityScale是2，则扩展到0.2-2。
+    func body(content: Content) -> some View {
+        content
+            .digitalCrownRotation($innerRotateValue, from: minValue*sensitivityScale, through: maxValue*sensitivityScale, sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true, onChange: { _ in }, onIdle: {})
+            .task {
+                //刚打开的时候更新初始的innerRotateValue
+                innerRotateValue = rotateValue * sensitivityScale
+            }
+            .onChange(of: innerRotateValue, initial: false) { oldValue, innerRotateValue in
+                if ignoreFirstInnerRotateValueChange {
+                    ignoreFirstInnerRotateValueChange = false
+                    return
+                }
+                //开始让外部的旋转值与内部同步
+                rotateValue = innerRotateValue / sensitivityScale
+            }
+    }
+}
+
+
 extension Double {
-    func clamped(to range: ClosedRange<Double>) -> Double {
-        return min(max(self, range.lowerBound), range.upperBound)
+    func clamped(min minValue: Double? = nil, max maxValue: Double? = nil) -> Double {
+        if let minValue = minValue, self < minValue {
+            return minValue
+        }
+        if let maxValue = maxValue, self > maxValue {
+            return maxValue
+        }
+        return self
     }
 }
 

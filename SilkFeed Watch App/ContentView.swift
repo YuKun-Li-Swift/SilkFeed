@@ -189,7 +189,9 @@ struct RSSSourceCacheView: View {
             }
             .tabViewStyle(.verticalPage)
             .navigationDestination(isPresented: $pushNewCacheView, destination: {
-                NewCacheView(rssSource:rssSource)
+                NewCacheView(rssSource:rssSource, closeMe: {
+                    pushNewCacheView = false
+                })
                     .id(newCacheViewID)
             }).navigationDestination(item: $selectedEntry, destination: { entry in
                 EntryReadingPage(source: rssSource, entry: entry)
