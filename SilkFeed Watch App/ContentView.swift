@@ -8,28 +8,71 @@
 import SwiftUI
 import SwiftData
 import SwiftSoup
+import os
 
 struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack {
-                SourceView()
+                GetSourceHolder { sourceHolder in
+                    SourceView(sourceHolder:sourceHolder)
+                }
+                
             }
             .navigationTitle("Silk Feed")
         }
     }
 }
 
-struct SourceView: View {
-    @Query(FetchDescriptor<RSSSource>.init(predicate: #Predicate<RSSSource> { _ in
+struct GetSourceHolder<V:View>: View {
+    @ViewBuilder
+    let content:(RSSSourceHolder) -> (V)
+    //数据库中只应该存在一个SourceHolder
+    @Query(FetchDescriptor<RSSSourceHolder>.init(predicate: #Predicate<RSSSourceHolder> { _ in
         true
-    }, sortBy: [.init(\.creatDate, order: .reverse)]), animation: .smooth)
-    private var sources:[RSSSource]
+    }), animation: .smooth)
+    private var sourceHolders:[RSSSourceHolder]
+    @Environment(\.modelContext)
+    private var modelContext
+    @State
+    private var error0:ErrorShip? = nil
+    var body: some View {
+        Group {
+            if let holder = sourceHolders.first {
+                content(holder)
+            } else {
+                ProgressView()
+                    .task {
+                        do {
+                            error0 = nil
+                            let newHolder = RSSSourceHolder()
+                            modelContext.insert(newHolder)
+                            try modelContext.save()
+                        } catch {
+                            error0 = .init(error: error)
+                        }
+                    }
+            }
+        }
+            .modifier(ErrorSupport(error: $error0))
+    }
+}
+
+struct SourceView: View {
+    var sourceHolder:RSSSourceHolder
+    private var sources:[RSSSource] {
+        sourceHolder.sources
+    }
     var body: some View {
         if sources.isEmpty {
-            AddSourceView()
+            AddSourceView(applyStyle: true, sourceHolder: sourceHolder)
         } else {
-            RSSSourcesView()
+            RSSSourcesView(sourceHolder: sourceHolder)
+                .toolbar {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        AddSourceView(applyStyle: false, sourceHolder: sourceHolder)
+                    }
+                }
         }
     }
 }
@@ -40,12 +83,13 @@ struct ErrorShip:Identifiable {
 }
 
 struct AddSourceView: View {
+    var applyStyle:Bool
     @Environment(\.modelContext)
     private var modelContext
-    @Query(FetchDescriptor<RSSSource>.init(predicate: #Predicate<RSSSource> { _ in
-        true
-    }, sortBy: [.init(\.creatDate, order: .reverse)]), animation: .smooth)
-    private var sources:[RSSSource]
+    var sourceHolder:RSSSourceHolder
+    private var sources:[RSSSource] {
+        sourceHolder.sources
+    }
     @State
     private var error0:ErrorShip? = nil
     var body: some View {
@@ -53,7 +97,7 @@ struct AddSourceView: View {
             Label("添加资讯源", systemImage: "plus")
         }, onSubmit: { content in
             handleUserInput(content: content)
-        })
+        }, applyStyle: applyStyle)
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .submitLabel(.join)
@@ -69,7 +113,7 @@ struct AddSourceView: View {
                 throw InvalidInput.notAURL
             }
             let newObj = RSSSource(name: sources.generateNewItemName(url: url), url: url)
-            modelContext.insert(newObj)
+            sourceHolder.sources.insert(newObj, at: 0)
             try modelContext.save()
         } catch  {
             print("发生错误")
@@ -88,10 +132,12 @@ struct AddSourceView: View {
 }
 
 struct RSSSourcesView: View {
-    @Query(FetchDescriptor<RSSSource>.init(predicate: #Predicate<RSSSource> { _ in
-        true
-    }, sortBy: [.init(\.creatDate, order: .reverse)]), animation: .smooth)
-    private var sources:[RSSSource]
+
+    var sourceHolder:RSSSourceHolder
+    
+    private var sources:[RSSSource] {
+        sourceHolder.sources
+    }
     
     @Environment(\.modelContext)
     private var modelContext
@@ -122,6 +168,9 @@ struct RSSSourcesView: View {
             .onDelete { indexSet in
                 swipeDelete(indexSet:indexSet)
             }
+            .onMove { indexSet, int in
+                sourceHolder.sources.move(fromOffsets: indexSet, toOffset: int)
+            }
         }
         .navigationDestination(item: $selectedSource, destination: { source in
             RSSSourceCacheView(rssSource: source)
@@ -134,7 +183,8 @@ struct RSSSourcesView: View {
     func swipeDelete(indexSet:IndexSet) {
         do {
             self.error0 = nil
-            try handleDelete(indexSet: indexSet, items: sources, modelContext: modelContext)
+            sourceHolder.sources.remove(atOffsets: indexSet)
+            try modelContext.save()
         } catch {
             
                 print("发生错误")
@@ -182,7 +232,13 @@ struct RSSSourceCacheView: View {
                     } else {
                         CacheList(cacheEntries: rssSource.cacheEntries,createNewCacheButton:{
                             createNewCacheButton()
-                        }, selectedEntry: $selectedEntry) 
+                        },deleteAction:{ entry in
+                            for i in entry {
+                                if let targetIndex = rssSource.cacheEntries.firstIndex(of: i) {
+                                    rssSource.cacheEntries.remove(at: targetIndex)
+                                }
+                            }
+                        }, selectedEntry: $selectedEntry)
                     }
                 }
                 .navigationTitle("缓存列表")
@@ -248,7 +304,7 @@ struct ImageRow: Identifiable {
 actor RSSParser {
     // 将 HTML `xmlContent` 解析为 [Row]
     func parseToRow(xmlContent:String,getImageDataByURL:(URL) async ->(Data?)) async throws -> [Row] {
-      
+        print(xmlContent)
         // 解码 HTML 实体
         let decodedDescription = try Entities.unescape(xmlContent)
         // 解析 HTML 内容
@@ -265,7 +321,7 @@ actor RSSParser {
                 let textRow = TextRow(textContent: textContent)
                 rows.append(.text(textRow))
             } else if element.tagName() == "img" {
-                // 处理图片链接，尝试下载数据
+                // 处理图片链接，并从本地缓存获取图片
                 if let src = try? element.attr("src"), let url = URL(string: src), let imageData = await getImageDataByURL(url) {
                     let imageRow = ImageRow(imageData: imageData)
                     rows.append(.image(imageRow))
@@ -320,29 +376,35 @@ actor RSSParser {
         </channel>
         </rss>
         """
-        
-       
-        // 使用 SwiftSoup 的 Entities.unescape 方法解码转义字符
-        let decodedXMLContent = try Entities.unescape(content)
-        
-        let xmlData = decodedXMLContent
-        
-        // 解析 XML 数据
-        let document = try SwiftSoup.parse(xmlData)
-        
-        // 查找所有 `<img>` 标签并获取 `src` 属性
-        let imgTags = try document.select("img")
         var imageUrls = [String]()
-        
-        for imgTag in imgTags {
-            if let src = try? imgTag.attr("src") {
-                imageUrls.append(src)
+        // 解析 XML 数据
+        let fullRss = try SwiftSoup.parse(content)
+        var shouldOutput = true
+        let channels = try fullRss.select("channel")
+        for channel in channels {
+            let items = try channel.select("item")
+            for item in items {
+                let descriptions = try item.select("description")
+                for encodedDescription in descriptions {
+                    // 解码转义字符
+                    let decodedDescription = try Entities.unescape(try encodedDescription.outerHtml())
+                    if shouldOutput {
+                        shouldOutput = false
+                        print(decodedDescription)
+                    }
+                    let description = try SwiftSoup.parse(decodedDescription)
+                    let imgs = try description.select("img")
+                    for imgTag in imgs {
+                                    if let src = try? imgTag.attr("src") {
+                                        imageUrls.append(src)
+                                    }
+                    }
+                }
             }
         }
-        
         // 打印所有图片链接
         for url in imageUrls {
-//            print(url)
+            os_log("\(url)")
         }
         return imageUrls.compactMap { urlString in
             guard let toURL = URL(string: urlString) else {
@@ -424,23 +486,31 @@ struct SystemDesginTextField<L:View>: View {
     @ViewBuilder
     let label:L
     let onSubmit:(String) -> Void
+    var applyStyle:Bool
     var body: some View {
-        TextFieldLink(prompt: prompt, label: {
-            
+        if applyStyle {
+            TextFieldLink(prompt: prompt, label: {
                 HStack(alignment: .center, spacing: 0) {
                     Spacer()
                     label
                         .padding(.vertical,14)
                     Spacer()
                 }
-                    .background(Color.accentColor.gradient.secondary)
-                    .clipShape(Capsule(style: .continuous))
-        }, onSubmit: onSubmit)
+                .background(Color.accentColor.gradient.secondary)
+                .clipShape(Capsule(style: .continuous))
+            }, onSubmit: onSubmit)
             .buttonBorderShape(.capsule)
             .buttonStyle(.plain)
             .scenePadding(.horizontal)
+        } else {
+            TextFieldLink(prompt: prompt, label: {
+                label
+            }, onSubmit: onSubmit)
+        }
     }
 }
+
+
 
 
 #Preview {

@@ -14,6 +14,6 @@ struct SilkFeed_Watch_AppApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [RSSSource.self,RSSCacheEntry.self,RSSCachedIamge.self])
+        .modelContainer(for: [RSSSourceHolder.self,RSSSource.self,RSSCacheEntry.self,RSSCachedIamge.self])
     }
 }

@@ -19,6 +19,7 @@ struct CacheList<V:View>: View {
     }
     @ViewBuilder
     let createNewCacheButton:()->(V)
+    var deleteAction:([RSSCacheEntry])->()
     @Environment(\.modelContext)
     private var modelContext
     @State
@@ -44,7 +45,12 @@ struct CacheList<V:View>: View {
     func swipeDelete(indexSet:IndexSet) {
         do {
             self.error0 = nil
-            try handleDelete(indexSet: indexSet, items: cacheEntries, modelContext: modelContext)
+            let entries:[RSSCacheEntry] = indexSet.compactMap { index in
+                guard sortedCacheEntries.indices.contains(index) else { return nil }
+                        return sortedCacheEntries[index]
+                    }
+            deleteAction(entries)
+            try modelContext.save()
         } catch {
             
             print("发生错误")

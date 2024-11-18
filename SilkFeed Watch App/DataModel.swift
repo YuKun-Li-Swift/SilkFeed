@@ -8,6 +8,15 @@
 import SwiftUI
 import SwiftData
 
+//用来实现用户自定义排序
+@MainActor
+@Model
+class RSSSourceHolder:Identifiable {
+    var id = UUID()
+    var sources:[RSSSource] = []
+    init() { }
+}
+
 @MainActor
 @Model
 class RSSSource:Identifiable {
@@ -59,14 +68,9 @@ func extractDomainComponent(from url: URL) -> String? {
     }
 }
 
-func handleDelete<T:PersistentModel>(indexSet:IndexSet,items:[T],modelContext:ModelContext) throws {
-    // 使用 indexSet 的索引获取元素
-    let slice = indexSet.compactMap { items.indices.contains($0) ? items[$0] : nil }
-    for source in slice {
-        modelContext.delete(source)
-    }
-    try modelContext.save()
-}
+
+
+
 @MainActor
 @Model
 class RSSCacheEntry: Identifiable {

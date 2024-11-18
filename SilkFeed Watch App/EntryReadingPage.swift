@@ -119,14 +119,14 @@ struct NewsItemReadingPage: View {
         } else {
             if let error0 = vm.error0 {
                 //Step2
-                InlineErrorView(text: "解析资讯列表失败", error: error0)
+                InlineErrorView(text: "解析资讯详情失败", error: error0)
                     .transition(.blurReplace.animation(.smooth))
             } else {
                 Group {
                     ProgressView()
                         .controlSize(.extraLarge)
                     
-                    Text("正在解析资讯列表")
+                    Text("正在解析资讯详情")
                 }
                 .task {
                     await vm.loadNews(xmlDescriptionField: xmlDescriptionField, getImageDataByURL: getImageDataByURL)
@@ -370,8 +370,11 @@ struct FullScreenOverlayImage: View {
             }
             .buttonStyle(.plain)
         }
+        //使用表冠来缩放的时候，以中心为锚点（默认是左上角为锚点）
+        .defaultScrollAnchor(.center, for: .sizeChanges)
     }
 }
+
 
 
 ///在不改变外部取值范围的情况下，调节灵敏度
