@@ -11,55 +11,28 @@ import SwiftSoup
 import os
 
 struct ContentView: View {
+    @State
+    private var showSettingsPage = false
     var body: some View {
         NavigationStack {
             VStack {
                 GetSourceHolder { sourceHolder in
-                    SourceView(sourceHolder:sourceHolder)
+                    SourceView(sourceHolder:sourceHolder, tapSettingsButton: {
+                        showSettingsPage = true
+                    })
                 }
-                
             }
             .navigationTitle("Silk Feed")
+            .navigationDestination(isPresented: $showSettingsPage, destination: {
+                SettingsPageSwitcher()
+            })
         }
-    }
-}
-
-struct GetSourceHolder<V:View>: View {
-    @ViewBuilder
-    let content:(RSSSourceHolder) -> (V)
-    //数据库中只应该存在一个SourceHolder
-    @Query(FetchDescriptor<RSSSourceHolder>.init(predicate: #Predicate<RSSSourceHolder> { _ in
-        true
-    }), animation: .smooth)
-    private var sourceHolders:[RSSSourceHolder]
-    @Environment(\.modelContext)
-    private var modelContext
-    @State
-    private var error0:ErrorShip? = nil
-    var body: some View {
-        Group {
-            if let holder = sourceHolders.first {
-                content(holder)
-            } else {
-                ProgressView()
-                    .task {
-                        do {
-                            error0 = nil
-                            let newHolder = RSSSourceHolder()
-                            modelContext.insert(newHolder)
-                            try modelContext.save()
-                        } catch {
-                            error0 = .init(error: error)
-                        }
-                    }
-            }
-        }
-            .modifier(ErrorSupport(error: $error0))
     }
 }
 
 struct SourceView: View {
     var sourceHolder:RSSSourceHolder
+    let tapSettingsButton:()->()
     private var sources:[RSSSource] {
         sourceHolder.sources
     }
@@ -71,6 +44,14 @@ struct SourceView: View {
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         AddSourceView(applyStyle: false, sourceHolder: sourceHolder)
+                    }
+                    ToolbarItemGroup(placement: .topBarLeading) {
+                        
+                            Button {
+                                tapSettingsButton()
+                            } label: {
+                                Label("设置", systemImage: "gear")
+                            }
                     }
                 }
         }
